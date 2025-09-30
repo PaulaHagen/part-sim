@@ -129,7 +129,7 @@ class Scenario(BaseScenario):
         # set random initial states
         for agent in world.agents:
             agent.state.p_pos = np_random.uniform(-1, +1, world.dim_p)
-            agent.state.p_vel = np.zeros(world.dim_p)
+            agent.state.p_vel = np.zeros(world.dim_p) # change p_vel if you want continuous movement
             agent.state.c = np.zeros(world.dim_c)
         for i, landmark in enumerate(world.landmarks):
             landmark.state.p_pos = np_random.uniform(-0.9, +0.9, world.dim_p)
