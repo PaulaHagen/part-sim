@@ -1,0 +1,4 @@
+# Use Python version 3.12.1
+mpe2==0.0.1
+pettingzoo==1.25.0
+jupyter==1.1.1
