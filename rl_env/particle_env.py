@@ -85,7 +85,7 @@ class raw_env(SimpleEnv, EzPickle):
             dynamic_rescaling=dynamic_rescaling,
         )
         self.metadata["name"] = "particle_v1"
-
+    
     # override draw function from MPE2 package 
     def draw(self):
         # clear screen
@@ -176,6 +176,8 @@ class raw_env(SimpleEnv, EzPickle):
                 self.original_cam_range
             )
 
+        # Prevent agent-agent collisions (considering their size/radius)
+        #for i, agent in enumerate(self.world.agents):
         global_reward = 0.0
         if self.local_ratio is not None:
             global_reward = float(self.scenario.global_reward(self.world))
@@ -192,7 +194,6 @@ class raw_env(SimpleEnv, EzPickle):
 
             self.rewards[agent.name] = reward
 
-
 env = make_env(raw_env)
 parallel_env = parallel_wrapper_fn(env)
 
@@ -206,17 +207,17 @@ class Scenario(BaseScenario):
         world.agents = [Agent() for i in range(num_agents)]
         for i, agent in enumerate(world.agents):
             agent.name = f"agent_{i}"
-            agent.collide = False # change later
+            agent.collide = True # they will be propulsed away if they collide -> check, why this happens at the t+1 right now!
             agent.size = 0.05
             agent.silent = True
         # add landmarks
         world.landmarks = [Landmark() for i in range(num_food_sources)]
         for i, landmark in enumerate(world.landmarks):
             landmark.name = "food source %d" % i
-            landmark.collide = False # change later
+            landmark.collide = False
             landmark.movable = False
             landmark.size = 0.2
-            landmark.boundary = False
+            landmark.boundary = False # If True, landmark cannot be seen in observations
         return world
 
     def reset_world(self, world, np_random):
@@ -235,10 +236,29 @@ class Scenario(BaseScenario):
         for i, landmark in enumerate(world.landmarks):
             landmark.state.p_pos = np_random.uniform(-0.9, +0.9, world.dim_p)
             landmark.state.p_vel = np.zeros(world.dim_p)
+    
+    # Function from simple spread environment to check for collisions
+    def is_collision(self, agent1, agent2):
+        delta_pos = agent1.state.p_pos - agent2.state.p_pos
+        dist = np.sqrt(np.sum(np.square(delta_pos)))
+        dist_min = agent1.size + agent2.size
+        return True if dist < dist_min else False
 
     def reward(self, agent, world):
-        dist2 = np.sum(np.square(agent.state.p_pos - world.landmarks[0].state.p_pos))
-        return -dist2
+        # Agents are rewarded based on minimum agent distance to each landmark, penalized for collisions
+        rew = 0
+        if agent.collide:
+            for a in world.agents:
+                rew -= 1.0 * (self.is_collision(a, agent) and a != agent)
+        return rew
+
+    def reward(self, agent, world):
+        dist_to_food = np.sum(np.square(agent.state.p_pos - world.landmarks[0].state.p_pos))
+        reward_for_not_colliding = 0.0
+        if agent.collide:
+            for a in world.agents:
+                reward_for_not_colliding -= 1.0 * (self.is_collision(a, agent) and a != agent)
+        return -dist_to_food + reward_for_not_colliding
 
     def observation(self, agent, world):
         # get positions of all entities in this agent's reference frame
