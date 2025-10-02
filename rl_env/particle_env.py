@@ -176,8 +176,6 @@ class raw_env(SimpleEnv, EzPickle):
                 self.original_cam_range
             )
 
-        # Prevent agent-agent collisions (considering their size/radius)
-        #for i, agent in enumerate(self.world.agents):
         global_reward = 0.0
         if self.local_ratio is not None:
             global_reward = float(self.scenario.global_reward(self.world))
@@ -244,21 +242,20 @@ class Scenario(BaseScenario):
         dist_min = agent1.size + agent2.size
         return True if dist < dist_min else False
 
-    def reward(self, agent, world):
-        # Agents are rewarded based on minimum agent distance to each landmark, penalized for collisions
-        rew = 0
-        if agent.collide:
-            for a in world.agents:
-                rew -= 1.0 * (self.is_collision(a, agent) and a != agent)
-        return rew
-
+    # Reward is given based on (1) minimizing distance to food, 
+    # (2) no collisions with other agents
+    # (3) staying within the environment bounds
     def reward(self, agent, world):
         dist_to_food = np.sum(np.square(agent.state.p_pos - world.landmarks[0].state.p_pos))
         reward_for_not_colliding = 0.0
         if agent.collide:
             for a in world.agents:
-                reward_for_not_colliding -= 1.0 * (self.is_collision(a, agent) and a != agent)
-        return -dist_to_food + reward_for_not_colliding
+                reward_for_not_colliding -= 1.0 * (self.is_collision(a, agent) and a != agent) # reward of -1 for each collision
+        border_position_penalty = 0.0
+        distance_to_border = 1 - np.max(np.abs(agent.state.p_pos)) # distance to the closest border
+        if distance_to_border <= agent.size *1.5: # if the agent is closer to the border than 1.5 times its radius
+            border_position_penalty = -1.0
+        return -dist_to_food + reward_for_not_colliding + border_position_penalty
 
     def observation(self, agent, world):
         # get positions of all entities in this agent's reference frame
