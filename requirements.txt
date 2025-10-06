@@ -2,3 +2,4 @@
 mpe2==0.0.1
 pettingzoo==1.25.0
 jupyter==1.1.1
+stochastic==0.6.0

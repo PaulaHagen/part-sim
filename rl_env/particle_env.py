@@ -50,6 +50,7 @@ from mpe2._mpe_utils.core import Agent, Landmark, World
 from mpe2._mpe_utils.scenario import BaseScenario
 from mpe2._mpe_utils.simple_env import SimpleEnv, make_env
 import pygame
+from stochastic.processes.continuous import BrownianMotion
 alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 
 
@@ -195,10 +196,9 @@ class raw_env(SimpleEnv, EzPickle):
 env = make_env(raw_env)
 parallel_env = parallel_wrapper_fn(env)
 
-
 class Scenario(BaseScenario):
     def make_world(self, num_agents=10, num_food_sources=1, flow='none'):
-        world = World()
+        world = MyWorld()
         num_agents = num_agents
         num_food_sources = num_food_sources
         # add agents
@@ -207,7 +207,10 @@ class Scenario(BaseScenario):
             agent.name = f"agent_{i}"
             agent.collide = True # they will be propulsed away if they collide -> check, why this happens at the t+1 right now!
             agent.size = 0.05
-            agent.silent = True
+            agent.silent = True # we don't work with communication in this env
+            # we want the agents to be affected by Brownian motion
+            # (Implemented in MyWorld class below)
+            agent.u_noise = True
         # add landmarks
         world.landmarks = [Landmark() for i in range(num_food_sources)]
         for i, landmark in enumerate(world.landmarks):
@@ -263,3 +266,20 @@ class Scenario(BaseScenario):
         for entity in world.landmarks:
             entity_pos.append(entity.state.p_pos - agent.state.p_pos)
         return np.concatenate([agent.state.p_vel] + entity_pos) # entity_pos are the vectors to the other entities
+
+class MyWorld(World):
+    # Override apply_action_force function from _mpe2_utils/core.py
+    def apply_action_force(self, p_force):
+        # set applied forces
+        for i, agent in enumerate(self.agents):
+            if agent.movable:
+                # a Brownian step from 0.0 origin
+                brownian_step = [BrownianMotion(drift=0, scale=1, t=1, rng=None).sample_at([1])[0], # if not in 2D environment, you have to adapt dimensions!
+                                 BrownianMotion(drift=0, scale=1, t=1, rng=None).sample_at([1])[0]]
+                noise = (
+                    np.asarray(brownian_step)
+                    if agent.u_noise # if set to True, otherwise no Brownian motion
+                    else 0.0
+                    )
+                p_force[i] = agent.action.u + noise # Brownian vector is added to the action vector
+        return p_force
