@@ -87,6 +87,26 @@ class raw_env(SimpleEnv, EzPickle):
         )
         self.metadata["name"] = "particle_v1"
     
+    # override reset function to fit pettingzoo/gym standard of returning the initial observations
+    def reset(self, seed=None, options=None):
+        if seed is not None:
+            self._seed(seed=seed)
+        observations, info = self.scenario.reset_world(self.world, self.np_random)
+
+        self.agents = self.possible_agents[:]
+        self.rewards = {name: 0.0 for name in self.agents}
+        self._cumulative_rewards = {name: 0.0 for name in self.agents}
+        self.terminations = {name: False for name in self.agents}
+        self.truncations = {name: False for name in self.agents}
+        self.infos = {name: {} for name in self.agents}
+
+        self.agent_selection = self._agent_selector.reset()
+        self.steps = 0
+
+        self.current_actions = [None] * self.num_agents
+
+        return observations
+    
     # override draw function from MPE2 package 
     def draw(self):
         # clear screen
@@ -193,7 +213,8 @@ class raw_env(SimpleEnv, EzPickle):
 
             self.rewards[agent.name] = reward
 
-env = make_env(raw_env)
+#env = make_env(raw_env) # this throws an error for the return of the overwritten reset function (only for "env", not for "raw-env" or "parallel_env")
+env = raw_env
 parallel_env = parallel_wrapper_fn(env)
 
 class Scenario(BaseScenario):
@@ -237,7 +258,15 @@ class Scenario(BaseScenario):
         for i, landmark in enumerate(world.landmarks):
             landmark.state.p_pos = np_random.uniform(-0.9, +0.9, world.dim_p)
             landmark.state.p_vel = np.zeros(world.dim_p)
-    
+
+        observations = {}
+        info = {}
+
+        for agent in world.agents:
+            observations[agent.name] = self.observation(agent, world)
+            info[agent.name] = {"reset complete"}  # Replace with actual info if needed
+        return observations, info
+
     # Function from simple spread environment to check for collisions
     def is_collision(self, agent1, agent2):
         delta_pos = agent1.state.p_pos - agent2.state.p_pos
@@ -283,3 +312,25 @@ class MyWorld(World):
                     )
                 p_force[i] = agent.action.u + noise # Brownian vector is added to the action vector
         return p_force
+    
+    # Override get_collision_force function from _mpe2_utils/core.py (to prevent from dividing by zero)
+    # get collision forces for any contact between two entities
+    def get_collision_force(self, entity_a, entity_b):
+        if (not entity_a.collide) or (not entity_b.collide):
+            return [None, None]  # not a collider
+        if entity_a is entity_b:
+            return [None, None]  # don't collide against itself
+        # compute actual distance between entities
+        delta_pos = entity_a.state.p_pos - entity_b.state.p_pos
+        dist = np.sqrt(np.sum(np.square(delta_pos)))
+        # minimum allowable distance
+        dist_min = entity_a.size + entity_b.size
+        # softmax penetration
+        k = self.contact_margin
+        penetration = np.logaddexp(0, -(dist - dist_min) / k) * k
+        if dist == 0.0: # to prevent division by zero
+            dist = 0.0001
+        force = self.contact_force * delta_pos / dist * penetration
+        force_a = +force if entity_a.movable else None
+        force_b = -force if entity_b.movable else None
+        return [force_a, force_b]
