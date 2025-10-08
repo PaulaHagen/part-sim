@@ -3,3 +3,10 @@ mpe2==0.0.1
 pettingzoo==1.25.0
 jupyter==1.1.1
 stochastic==0.6.0
+supersuit==3.10.0
+stable-baselines3==2.7.0
+
+# for RLlib
+ray[rllib]==2.49.0
+torch==2.8.0
+gputil==1.4.0
