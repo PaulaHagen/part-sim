@@ -227,7 +227,7 @@ class Scenario(BaseScenario):
         for i, agent in enumerate(world.agents):
             agent.name = f"agent_{i}"
             agent.collide = True # they will be propulsed away if they collide -> check, why this happens at the t+1 right now!
-            agent.size = 0.05
+            agent.size = 0.02
             agent.silent = True # we don't work with communication in this env
             # we want the agents to be affected by Brownian motion
             # (Implemented in MyWorld class below)
