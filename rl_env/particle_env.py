@@ -297,6 +297,11 @@ class Scenario(BaseScenario):
         return np.concatenate([agent.state.p_vel] + entity_pos) # entity_pos are the vectors to the other entities
 
 class MyWorld(World):
+    # Override the function that returns all entities in the world
+    @property
+    def entities(self):
+        return self.landmarks + self.agents # agents after landmarks, so the agents get rendered in front and are not hidden by the landmarks
+    
     # Override apply_action_force function from _mpe2_utils/core.py
     def apply_action_force(self, p_force):
         # set applied forces
