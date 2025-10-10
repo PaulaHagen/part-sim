@@ -213,8 +213,8 @@ class raw_env(SimpleEnv, EzPickle):
 
             self.rewards[agent.name] = reward
 
-#env = make_env(raw_env) # this throws an error for the return of the overwritten reset function (only for "env", not for "raw-env" or "parallel_env")
-env = raw_env
+env = make_env(raw_env) # this throws an error for the return of the overwritten reset function (only for "env", not for "raw-env" or "parallel_env")
+#env = raw_env
 parallel_env = parallel_wrapper_fn(env)
 
 class Scenario(BaseScenario):
@@ -287,7 +287,7 @@ class Scenario(BaseScenario):
         distance_to_border = 1 - np.max(np.abs(agent.state.p_pos)) # distance to the closest border
         if distance_to_border <= agent.size *1.5: # if the agent is closer to the border than 1.5 times its radius
             border_position_penalty = -1.0
-        return -dist_to_food + reward_for_not_colliding + border_position_penalty
+        return -dist_to_food + border_position_penalty # + reward_for_not_colliding # Add after size problems and collision bug are fixed 
 
     def observation(self, agent, world):
         # get positions of all entities in this agent's reference frame
