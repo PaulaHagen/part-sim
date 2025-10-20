@@ -112,8 +112,11 @@ class raw_env(SimpleEnv, EzPickle):
         # clear screen
         self.screen.fill((255, 255, 255))
 
+        # flip entities so landmakrs are drawn last (they will be rendered in the background)
+        entities_flipped = self.world.entities[::-1]
+
         # update bounds to center around agent
-        all_poses = [entity.state.p_pos for entity in self.world.entities]
+        all_poses = [entity.state.p_pos for entity in entities_flipped]
 
         # We want to prohibit agents moving outside the screen, so we choose a fixed cam_range
         cam_range = self.original_cam_range
@@ -124,7 +127,7 @@ class raw_env(SimpleEnv, EzPickle):
 
         # update geometry and text positions
         text_line = 0
-        for e, entity in enumerate(self.world.entities):
+        for e, entity in enumerate(entities_flipped):
             # geometry
             x, y = entity.state.p_pos
             y *= (
@@ -300,7 +303,7 @@ class MyWorld(World):
     # Override the function that returns all entities in the world
     @property
     def entities(self):
-        return self.landmarks + self.agents # agents after landmarks, so the agents get rendered in front and are not hidden by the landmarks
+        return self.agents + self.landmarks
     
     # Override apply_action_force function from _mpe2_utils/core.py
     def apply_action_force(self, p_force):
