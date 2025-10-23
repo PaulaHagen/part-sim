@@ -35,15 +35,9 @@ def train(env_fn, steps: int = 1000000, seed: int | None = 0, render_mode: str |
     # This helps tensorboard logging
     env = VecMonitor(env, filename=(LOG_PATH + '/' + MODEL_TYPE))
 
-    # Initiate model from list = DQN, SAC, TD3, DDPG, A2C, PPO
+    # Initiate model from list = DQN, A2C, PPO
     if MODEL_TYPE == 'DQN':
         model = DQN('MlpPolicy', env, verbose=3, tensorboard_log = LOG_PATH) #batch_size=256, )
-    elif MODEL_TYPE == 'SAC':
-        model = SAC('MlpPolicy', env, verbose=3, tensorboard_log = LOG_PATH)
-    elif MODEL_TYPE == 'TD3':
-        model = TD3('MlpPolicy', env, verbose=3, tensorboard_log = LOG_PATH)
-    elif MODEL_TYPE == 'DDPG':
-        model = DDPG('MlpPolicy', env, verbose=3, tensorboard_log = LOG_PATH)
     elif MODEL_TYPE == 'A2C':
         model = A2C('MlpPolicy', env, verbose=3, tensorboard_log = LOG_PATH)
     elif MODEL_TYPE == 'PPO':
@@ -60,7 +54,7 @@ def train(env_fn, steps: int = 1000000, seed: int | None = 0, render_mode: str |
 
 def eval(env_fn, num_games: int = 100, render_mode: str | None = None, **env_kwargs):
     # Evaluate a trained agent vs a random agent
-    env = env_fn.env(render_mode = None, **env_kwargs)
+    env = env_fn.env(render_mode = render_mode, **env_kwargs)
     env = ss.frame_stack_v1(env, stack_size=4)
 
     print(
@@ -78,12 +72,6 @@ def eval(env_fn, num_games: int = 100, render_mode: str | None = None, **env_kwa
     # Load saved model
     if MODEL_TYPE == 'DQN':
         model = DQN.load(latest_policy)
-    elif MODEL_TYPE == 'SAC':
-        model = SAC.load(latest_policy)
-    elif MODEL_TYPE == 'TD3':
-        model = TD3.load(latest_policy)
-    elif MODEL_TYPE == 'DDPG':
-        model = DDPG.load(latest_policy)
     elif MODEL_TYPE == 'A2C':
         model = A2C.load(latest_policy)
     elif MODEL_TYPE == 'PPO':
@@ -145,10 +133,10 @@ if __name__ == "__main__":
     parser.add_argument('model_type', help='Stable Baselines3 RL algorithm')
     args = parser.parse_args()
 
-    if args.model_type in ['DQN', 'SAC', 'TD3', 'DDPG', 'A2C', 'PPO']:
+    if args.model_type in ['DQN', 'A2C', 'PPO']:
         MODEL_TYPE = args.model_type
     else:
-        print('No correct model type given. Options are: DQN, SAC, TD3, DDPG, A2C, PPO.')
+        print('No correct model type given. Options are: DQN, A2C, PPO. The other models don\'t support discrete action space.')
 
     # Train a model (takes ~5 minutes on a laptop CPU)
     train(env_fn, steps=1000000, seed=0, render_mode = None, **env_kwargs)
