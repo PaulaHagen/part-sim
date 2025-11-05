@@ -17,7 +17,7 @@ def train(env_fn, steps: int = 300000, seed: int | None = 0, render_mode: str | 
     # Load environment and preprocess using supersuit
     env = env_fn.parallel_env(render_mode=render_mode, **env_kwargs)
     print(f"Starting training on {str(env.metadata['name'])} with \"{OBS_TYPE}\" observation space.")
-    env.reset(seed=seed) 
+    env.reset(seed=seed)
 
     # Stack frames, so context of actions is included (helpful for learning movement)
     env = ss.frame_stack_v1(env, stack_size=4)
@@ -36,12 +36,6 @@ def train(env_fn, steps: int = 300000, seed: int | None = 0, render_mode: str | 
     env = VecMonitor(env, filename=(LOG_PATH + '/PPO_' + OBS_TYPE))
 
     # Initiate PPO model depending on observation space type. (Default "god")
-    if OBS_TYPE == 'god':
-        mycode = "enter code"
-    elif OBS_TYPE == 'vision':
-        mycode = "enter code"
-    elif OBS_TYPE == 'proprioception':
-        mycode = "enter code"
     model = PPO('MlpPolicy', env, verbose=3, tensorboard_log = LOG_PATH)
     
     # Train and save model
@@ -59,17 +53,20 @@ def eval(env_fn, num_games: int = 100, render_mode: str | None = None, **env_kwa
     env = ss.frame_stack_v1(env, stack_size=4)
 
     print(
-        f"\nStarting evaluation on {str(env.metadata['name'])} (num_games={num_games}, render_mode={render_mode})"
-    )
+            f"\nStarting evaluation on {str(env.metadata['name'])} (num_games={num_games}, render_mode={render_mode})"
+        )
+    
+    env.reset()
 
     try:
-        latest_policy = max(
-            glob.glob(f"models/PPO_{OBS_TYPE}*.zip"), key=os.path.getctime
-        )
+        #latest_policy = max(
+        #    glob.glob(f"models/PPO_{OBS_TYPE}*.zip"), key=os.path.getctime
+        #)
+        latest_policy = "models/PPO_proprioception_20251024-124231.zip"
     except ValueError:
         print("Policy not found.")
         exit(0)
-
+    print("Loaded model ", latest_policy)
     # Load saved model
     model = PPO.load(latest_policy)
     
@@ -115,6 +112,9 @@ if __name__ == "__main__":
     os.makedirs("logs/", exist_ok=True)
     LOG_PATH = "logs/"
 
+    # Make models log dir
+    os.makedirs("models/", exist_ok=True)
+
     # Get number of cpus
     NUM_CORES = multiprocessing.cpu_count()
 
@@ -126,7 +126,7 @@ if __name__ == "__main__":
     parser.add_argument('obs_type', help='Type of observation space for agents (god, vision, proprioception)')
     args = parser.parse_args()
 
-    if args.obs_type in ['god', 'vision', 'proprioception']:
+    if args.obs_type in ['god', 'vision', 'proprioception', 'old']:
         OBS_TYPE = args.obs_type
     else:
         print('No correct observation space type given. Options are: god, vision, proprioception.')
@@ -135,10 +135,10 @@ if __name__ == "__main__":
     env_kwargs = dict(num_agents=10, num_food_sources=1, obs_type = OBS_TYPE, flow='none', max_cycles=100)
  
     # Train a model
-    train(env_fn, steps=1000000, seed=0, render_mode = None, **env_kwargs)
+    #train(env_fn, steps=100000, seed=0, render_mode = None, **env_kwargs)
 
     # Evaluate 10 games without rendering
-    #eval(env_fn, num_games=10, render_mode=None, **env_kwargs)
+    #eval(num_games=10, render_mode=None, **env_kwargs)
 
     # Watch 2 games in pygame window
-    #eval(env_fn, num_games=2, render_mode="human", **env_kwargs)
+    eval(env_fn, num_games=1, render_mode="human", **env_kwargs)

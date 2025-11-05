@@ -59,7 +59,7 @@ class raw_env(SimpleEnv, EzPickle):
         self,
         num_agents=10,
         num_food_sources=1,
-        obs_type = 'god',
+        obs_type = 'proprioception',
         flow = 'none',
         max_cycles=25,
         continuous_actions=False,
@@ -225,10 +225,11 @@ env = make_env(raw_env) # this throws an error for the return of the overwritten
 parallel_env = parallel_wrapper_fn(env)
 
 class Scenario(BaseScenario):
-    def make_world(self, num_agents=10, num_food_sources=1, obs_type = 'god', flow='none'):
+    def make_world(self, num_agents=10, num_food_sources=1, obs_type = 'proprioception', flow='none'):
         world = MyWorld()
         num_agents = num_agents
         num_food_sources = num_food_sources
+        print(obs_type)
         world.obs_type = obs_type
         # add agents
         world.agents = [Agent() for i in range(num_agents)]
@@ -240,6 +241,7 @@ class Scenario(BaseScenario):
             # we want the agents to be affected by Brownian motion
             # (Implemented in MyWorld class below)
             agent.u_noise = True
+            agent.boundary = False
         # add landmarks
         world.landmarks = [Landmark() for i in range(num_food_sources)]
         for i, landmark in enumerate(world.landmarks):
@@ -247,21 +249,21 @@ class Scenario(BaseScenario):
             landmark.collide = False
             landmark.movable = False
             landmark.size = 0.2
-            landmark.boundary = True # If True, landmark cannot be seen in observations
+            landmark.boundary = False # If True, landmark cannot be seen in observations
         return world
 
     def reset_world(self, world, np_random):
         # greenish colour for agents
-        colors = [np.array([0.35, 0.85, 0.35]),
-                  np.array([0.85, 0.0, 0.35]),
-                  np.array([0.35, 0.35, 0.35]), 
-                  np.array([0.0, 0.0, 0.35]), 
-                  np.array([0.9, 0.85, 0.2]),
-                  np.array([0.2, 0.85, 0.9]),
-                  np.array([0.7, 0.9, 0.9]),
-                  np.array([0.1, 0.85, 0.35]),
-                  np.array([0.2, 0.0, 0.35]),
-                  np.array([0.6, 0.85, 0.0])]
+        colors = [np.array([0.0, 0.0, 0.0]),
+                    np.array([0.95, 0.0, 0.35]),
+                    np.array([0.35, 0.35, 0.35]), 
+                    np.array([0.5, 0.0, 0.35]), 
+                    np.array([0.9, 0.85, 0.2]),
+                    np.array([0.2, 0.85, 0.9]),
+                    np.array([0.0, 0.45, 0.05]),
+                    np.array([0.1, 0.85, 0.35]),
+                    np.array([0.2, 0.0, 0.75]),
+                    np.array([1.0, 1.0, 1.0])]
         for i, agent in enumerate(world.agents):
             #agent.color = np.array([0.35, 0.85, 0.35])
             agent.color = colors[i]
@@ -287,42 +289,74 @@ class Scenario(BaseScenario):
         return observations, info
 
     # Function from simple spread environment to check for collisions
-    def is_collision(self, agent1, agent2):
-        delta_pos = agent1.state.p_pos - agent2.state.p_pos
+    def is_collision(self, entity1, entity2):
+        delta_pos = entity1.state.p_pos - entity2.state.p_pos
         dist = np.sqrt(np.sum(np.square(delta_pos)))
-        dist_min = agent1.size + agent2.size
+        dist_min = entity1.size + entity2.size
         return True if dist < dist_min else False
 
     # Reward is given based on (1) minimizing distance to food, 
     # (2) no collisions with other agents
     # (3) staying within the environment bounds
     def reward(self, agent, world):
-        dist_to_food = np.sqrt(np.sum(np.square(agent.state.p_pos - world.landmarks[0].state.p_pos)))
-        reward_for_not_colliding = 0.0
+        dist_to_food = np.sum(np.square(agent.state.p_pos - world.landmarks[0].state.p_pos))
+        penalty_for_colliding = 0.0
         if agent.collide:
             for a in world.agents:
-                reward_for_not_colliding -= 1.0 * (self.is_collision(a, agent) and a != agent) # reward of -1 for each collision
+                penalty_for_colliding -= 1.0 * (self.is_collision(a, agent) and a != agent) # reward of -1 for each collision
         border_position_penalty = 0.0
         distance_to_border = 1 - np.max(np.abs(agent.state.p_pos)) # distance to the closest border
         if distance_to_border <= agent.size *1.5: # if the agent is closer to the border than 1.5 times its radius
             border_position_penalty = -1.0
-        return -dist_to_food + border_position_penalty # + reward_for_not_colliding # Add after size problems and collision bug are fixed 
+        return -dist_to_food #+ border_position_penalty + penalty_for_colliding # Add after size problems and collision bug are fixed 
+
+    def reward_new(self, agent, world):
+        # Food reward
+        food_reward = 0.0
+        for landmark in world.landmarks:
+            if self.is_collision(agent, landmark):
+                food_reward += 1.0
+        # Penalty for colliding
+        penalty_for_colliding = 0.0
+        if agent.collide:
+            for a in world.agents:
+                penalty_for_colliding -= 2.0 * (self.is_collision(a, agent) and a != agent) # reward of -1 for each collision
+        # Penalty for trying to move outside the frame
+        border_position_penalty = 0.0
+        distance_to_border = 1 - np.max(np.abs(agent.state.p_pos)) # distance to the closest border
+        if distance_to_border <= agent.size *1.5: # if the agent is closer to the border than 1.5 times its radius
+            border_position_penalty = -1.0
+        return food_reward + border_position_penalty + penalty_for_colliding # Add after size problems and collision bug are fixed 
+
+    def observation_old(self, agent, world):
+        # get positions of all entities in this agent's reference frame
+        entity_pos = []
+        for entity in world.landmarks:
+            entity_pos.append(entity.state.p_pos - agent.state.p_pos)
+        return np.concatenate([agent.state.p_vel] + entity_pos)
 
     def observation(self, agent, world):
         # get distances to all other entities for this agent and combine with its velocity
         entity_pos = []
+        
         if world.obs_type == "god":
             for entity in world.entities:
-                entity_pos.append(entity.state.p_pos) # entity_pos are the vectors to the other entities
+                if entity.boundary:  # invisible entities
+                    entity_pos.append(np.array([0.0,0.0]))
+                else:
+                    entity_pos.append(entity.state.p_pos) # entity_pos are the vectors to the other entities
         elif world.obs_type == "vision":
             for entity in world.entities:
-                entity_pos.append(entity.state.p_pos - agent.state.p_pos) # old structure right now
+                entity_pos.append(entity.state.p_pos - agent.state.p_pos) # old structure right now (only swapped landmarks for entities but this does not seem to work at all)
         elif world.obs_type == "proprioception":
             for entity in world.entities:
                 if entity == agent:
                     entity_pos.append(entity.state.p_pos) # only own position added
                 else:
                     entity_pos.append(np.array([0.0,0.0]))
+        elif world.obs_type == "old":
+            for entity in world.landmarks:
+                entity_pos.append(entity.state.p_pos - agent.state.p_pos)
         else:
             print("Incorrect observation space type. Enter \"god\", \"vision\" or \"proprioception\"")
 
