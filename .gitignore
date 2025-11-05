@@ -1,6 +1,7 @@
-# No models
+# No models and data
 models/
 ppo_model_checkpoint/
+data/
 
 # Hidden Mac Files
 *.DS_Store
