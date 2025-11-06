@@ -328,13 +328,6 @@ class Scenario(BaseScenario):
             border_position_penalty = -1.0
         return food_reward + border_position_penalty + penalty_for_colliding # Add after size problems and collision bug are fixed 
 
-    def observation_old(self, agent, world):
-        # get positions of all entities in this agent's reference frame
-        entity_pos = []
-        for entity in world.landmarks:
-            entity_pos.append(entity.state.p_pos - agent.state.p_pos)
-        return np.concatenate([agent.state.p_vel] + entity_pos)
-
     def observation(self, agent, world):
         # get distances to all other entities for this agent and combine with its velocity
         entity_pos = []
@@ -365,18 +358,13 @@ class Scenario(BaseScenario):
 class MyWorld(World):
     # Override apply_action_force function from _mpe2_utils/core.py
     def apply_action_force(self, p_force):
-        # set applied forces
+        # set applied forces (action plus Brownian noise)
         for i, agent in enumerate(self.agents):
             if agent.movable:
-                # a Brownian step from 0.0 origin
-                brownian_step = [BrownianMotion(drift=0, scale=1, t=1, rng=None).sample_at([1])[0], # if not in 2D environment, you have to adapt dimensions!
-                                 BrownianMotion(drift=0, scale=1, t=1, rng=None).sample_at([1])[0]]
-                noise = (
-                    np.asarray(brownian_step)
-                    if agent.u_noise # if set to True, otherwise no Brownian motion
-                    else 0.0
-                    )
-                p_force[i] = agent.action.u + noise # Brownian vector is added to the action vector
+                noise = (self.apply_brownian_noise(num_dimensions=2)
+                    if agent.u_noise
+                    else 0.0)
+                p_force[i] = agent.action.u + noise
         return p_force
     
     # Override step function from _mpe2/utils/core.py
@@ -390,183 +378,74 @@ class MyWorld(World):
         # apply agent physical controls
         p_force = self.apply_action_force(p_force)
 
-        # apply environment forces
-        '''
-        collision_detected = True
-        i = 0
-        while collision_detected:
-            print("while loop started")
-            p_force = self.apply_environment_force(p_force)
-            # integrate physical state
-            self.integrate_state(p_force)
-            # update agent state
-            for agent in self.agents:
-                self.update_agent_state(agent)
-            if self.is_any_collision():
-                collision_detected = True
-                print("Collision detected!")
-            else: 
-                False
-            print("while loop ended")
-            i +=1
-            if i > 10:
-                collision_detected = False
-            print('------------------')
-        '''
-        #p_force = self.apply_environment_force(p_force)
-        # integrate physical state
+        # integrate physical state (this also applies environment (collision) forces now)
         self.integrate_state(p_force)
-        # update agent state (this is only for communication but our agents are silent)
-        for agent in self.agents:
-            self.update_agent_state(agent)
-
-    # Override apply_environment_force function from _mpe2_utils/core.py to account for multiple collision (new collision after corrected course)
-    # gather physical forces acting on entities
-    def apply_environment_force(self, p_force): 
-        for a, entity_a in enumerate(self.entities):
-            for b, entity_b in enumerate(self.entities):
-                if b <= a:
-                    continue
-                [f_a, f_b] = self.get_collision_force(entity_a, entity_b)
-                if f_a is not None or f_b is not None:
-                    if p_force[a] is None:
-                        p_force[a] = 0.0
-                    p_force[a] = f_a + p_force[a]
-                    if p_force[b] is None:
-                        p_force[b] = 0.0
-                    p_force[b] = f_b + p_force[b]
-        return p_force
     
     # Override integrate_state function from _mpe2_utils/core.py
-    # integrate physical state
+    # integrate physical state, including collision handling
     def integrate_state(self, p_force):
-        # Change states until no collisions are detected anymore
-        counter = 0
+        # First, save all new positions and velocities in a temporary array
+        new_pos = np.zeros((len(self.entities), self.dim_p))
+        new_vels = np.zeros((len(self.entities), self.dim_p))
+        for i, entity in enumerate(self.entities):
+            if not entity.movable:
+                new_vels[i] = entity.state.p_vel
+                new_pos[i] = entity.state.p_pos
+            new_vels[i] = entity.state.p_vel*(1 - self.damping)
+            if p_force[i] is not None:
+                new_vels[i] += p_force[i] * self.dt
+            new_pos[i] = entity.state.p_pos + new_vels[i] * self.dt
+
+            # Clip positions to stay within bounds of the window
+            if new_pos[i][0] < -1.0 or new_pos[i][0] > 1.0 or new_pos[i][1] < -1.0 or new_pos[i][1] > 1.0:
+                new_pos[i] = np.clip(new_pos[i], -1.0,1.0) # change this to cam_range later
+                # Add Brownian motion noise to not get stuck at borders
+                new_pos[i] += self.apply_brownian_noise(num_dimensions=2)
+
+        # Next, change states until no collisions are detected anymore
         is_collision = True
         while is_collision:
             is_collision = False
 
-            for a, entity_a in enumerate(self.entities):
-                if not entity_a.movable:
+            for a, pos_a in enumerate(new_pos):
+                if self.entities[a].movable == False:
                     continue
-                entity_a.state.p_vel = entity_a.state.p_vel*(1 - self.damping)
-                if p_force[a] is not None:
-                    new_vel_a = entity_a.state.p_vel + (p_force[a] / entity_a.mass) * self.dt 
-                else:
-                    new_vel_a = entity_a.state.p_vel
-                new_pos_a = entity_a.state.p_pos + new_vel_a*self.dt
-
-                # Clip positions to stay within bounds of the window
-                if new_pos_a[0] < -1.0 or new_pos_a[0] > 1.0 or new_pos_a[1] < -1.0 or new_pos_a[1] > 1.0:
-                    new_pos_a = np.clip(new_pos_a, -1.0,1.0) # change this to cam_range later
-                    # Add Brownian motion noise to not get stuck at borders (from a normal distribution with mean 0 and std 1 -> most values will be between -3 and 3)
-                    brownian_step = [BrownianMotion(drift=0, scale=1, t=1, rng=None).sample_at([1])[0], # if not in 2D environment, you have to adapt dimensions!
-                                    BrownianMotion(drift=0, scale=1, t=1, rng=None).sample_at([1])[0]]
-                    new_pos_a += 0.1*np.asarray(brownian_step)
-                # Check if the new position collides with anyone
-                for b, entity_b in enumerate(self.entities):
-                    if not entity_b.movable:
+                for b, pos_b in enumerate(new_pos):
+                    if self.entities[b].movable == False or b<=a:
                         continue
-                    # Ensure no double checking
-                    if b <= a:
-                        continue
-                    # First, get new position and velocity of b
-                    if p_force[b] is not None:
-                        new_vel_b = entity_b.state.p_vel*(1 - self.damping) + (p_force[b]/entity_b.mass) * self.dt
-                    else:
-                        new_vel_b = entity_b.state.p_vel*(1 - self.damping)
-                    new_pos_b = entity_b.state.p_pos + new_vel_b*self.dt
-                    # Clip positions to stay within bounds of the window
-                    new_pos_b = np.clip(new_pos_b, -1.0, 1.0) 
                     # compute actual distance between entities
-                    delta_pos = new_pos_a - new_pos_b
+                    delta_pos = new_pos[a] - new_pos[b]
                     # compute Euclidean distance
                     dist = np.sqrt(np.sum(np.square(delta_pos)))
                     # minimum allowable distance
-                    dist_min = entity_a.size + entity_b.size
+                    dist_min = self.entities[a].size + self.entities[b].size
                     # If collision detected, shift update position and velocity
                     if dist < dist_min and a != b:
                         missing_dist = dist_min - dist
                         # unit direction from b → a
                         dir_ab = delta_pos / dist
-                        # displacement needed
-                        correction_vector = dir_ab * (missing_dist)
-                        # update pos and vel (assuming dt = 1)
-                        new_vel_a += correction_vector
-                        new_pos_a += correction_vector
+                        # displacement needed (but at least 25% of dist_min to avoid getting stuck with infinetely small corrections)
+                        correction_vector = dir_ab * max(missing_dist, dist_min*0.25)
+                        # update pos and vel
+                        new_vels[a] += correction_vector
+                        new_pos[a] += correction_vector
+                        # Clip positions to stay within bounds of the window
+                        if new_pos[a][0] < -1.0 or new_pos[a][0] > 1.0 or new_pos[a][1] < -1.0 or new_pos[a][1] > 1.0:
+                            new_pos[a] = np.clip(new_pos[a], -1.0,1.0) # change this to cam_range later
+                            # Add Brownian motion noise to not get stuck at borders
+                            new_pos[a] += self.apply_brownian_noise(num_dimensions=2)
                         # set flag to true to indicate another check is needed
                         is_collision = True
-                   
-                entity_a.state.p_vel = new_vel_a
-                entity_a.state.p_pos = new_pos_a               
-            
-            counter += 1
-        print('exited while loop after counts: ', counter)
-    
 
-    def integrate_state_old(self, p_force):
-        #print('new_round')
-        #print('#################')
+        # Finally, save all new positions and velocities to the actual entities
         for i, entity in enumerate(self.entities):
-            if not entity.movable:
-                continue
-            #entity.state.p_pos += entity.state.p_vel * self.dt
-            #print('Old pos: ', entity.state.p_pos)
-            entity.state.p_vel = entity.state.p_vel * (1 - self.damping) # damping is loss of energy, here 0.25
-            if p_force[i] is not None:
-                entity.state.p_vel += (p_force[i] / entity.mass) * self.dt # mass is 1 and dt is 0.1 (time step interval)
-            if entity.max_speed is not None:
-                speed = np.sqrt(
-                    np.square(entity.state.p_vel[0]) + np.square(entity.state.p_vel[1])
-                )
-                if speed > entity.max_speed:
-                    entity.state.p_vel = (
-                        entity.state.p_vel
-                        / np.sqrt(
-                            np.square(entity.state.p_vel[0])
-                            + np.square(entity.state.p_vel[1])
-                        )
-                        * entity.max_speed
-                    )
-            entity.state.p_pos += entity.state.p_vel * self.dt
-            #print('New pos: ', entity.state.p_pos)
-            #print('--------------------')
-    
-    # Override get_collision_force function from _mpe2_utils/core.py (to prevent from dividing by zero)
-    # get collision forces for any contact between two entities
-    def get_collision_force(self, entity_a, entity_b):
-        if (not entity_a.collide) or (not entity_b.collide):
-            return [None, None]  # not a collider
-        if entity_a is entity_b:
-            return [None, None]  # don't collide against itself
-        # compute actual distance between entities
-        delta_pos = entity_a.state.p_pos - entity_b.state.p_pos
-        # compute Euclidean distance
-        dist = np.sqrt(np.sum(np.square(delta_pos)))
-        # minimum allowable distance
-        dist_min = entity_a.size + entity_b.size
-        if dist >= dist_min: # agents are far enough away from each other
-            return [None, None]
-        # softmax penetration
-        k = self.contact_margin
-        penetration = np.logaddexp(0, -(dist - dist_min) / k) * k
-        if dist == 0.0: # to prevent division by zero
-            dist = 0.0001
-        force = self.contact_force * delta_pos / dist * penetration
-        force_a = +force if entity_a.movable else None
-        force_b = -force if entity_b.movable else None
-        return [force_a, force_b]
-    
-    # Function from simple spread environment to check for collisions
-    def is_any_collision(self):
-        collision = False
-        for a, agent_a in enumerate(self.entities):
-            for b, agent_b in enumerate(self.entities):
-                if b <= a:
-                    continue
-                delta_pos = agent_a.state.p_pos - agent_b.state.p_pos
-                dist = np.sqrt(np.sum(np.square(delta_pos)))
-                dist_min = agent_a.size + agent_b.size
-                if dist < dist_min:
-                    collision = True
-        return collision
+            entity.state.p_vel = new_vels[i]
+            entity.state.p_pos = new_pos[i]
+
+
+    # Apply Brownian Noise (from a normal distribution with mean 0 and std 1 -> most values will be between -3 and 3), multiplied by a small scalar
+    def apply_brownian_noise(self, num_dimensions=2):
+        brownian_step = []
+        for dim in range(num_dimensions):
+            brownian_step.append(BrownianMotion(drift=0, scale=1, t=1, rng=None).sample_at([1])[0])
+        return np.asarray(brownian_step)
