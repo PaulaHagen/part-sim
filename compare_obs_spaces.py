@@ -59,10 +59,10 @@ def eval(env_fn, num_games: int = 100, render_mode: str | None = None, **env_kwa
     env.reset()
 
     try:
-        #latest_policy = max(
-        #    glob.glob(f"models/PPO_{OBS_TYPE}*.zip"), key=os.path.getctime
-        #)
-        latest_policy = "models/PPO_proprioception_20251024-124231.zip"
+        latest_policy = max(
+            glob.glob(f"models/PPO_{OBS_TYPE}*.zip"), key=os.path.getctime
+        )
+        #latest_policy = "models/PPO_proprioception_20251024-124231.zip"
     except ValueError:
         print("Policy not found.")
         exit(0)
@@ -135,7 +135,7 @@ if __name__ == "__main__":
     env_kwargs = dict(num_agents=10, num_food_sources=1, obs_type = OBS_TYPE, flow='none', max_cycles=100)
  
     # Train a model
-    #train(env_fn, steps=100000, seed=0, render_mode = None, **env_kwargs)
+    train(env_fn, steps=10000, seed=0, render_mode = None, **env_kwargs)
 
     # Evaluate 10 games without rendering
     #eval(num_games=10, render_mode=None, **env_kwargs)

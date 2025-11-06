@@ -413,10 +413,10 @@ class MyWorld(World):
                 collision_detected = False
             print('------------------')
         '''
-        p_force = self.apply_environment_force(p_force)
+        #p_force = self.apply_environment_force(p_force)
         # integrate physical state
         self.integrate_state(p_force)
-        # update agent state
+        # update agent state (this is only for communication but our agents are silent)
         for agent in self.agents:
             self.update_agent_state(agent)
 
@@ -440,6 +440,70 @@ class MyWorld(World):
     # Override integrate_state function from _mpe2_utils/core.py
     # integrate physical state
     def integrate_state(self, p_force):
+        # Change states until no collisions are detected anymore
+        counter = 0
+        is_collision = True
+        while is_collision:
+            is_collision = False
+
+            for a, entity_a in enumerate(self.entities):
+                if not entity_a.movable:
+                    continue
+                entity_a.state.p_vel = entity_a.state.p_vel*(1 - self.damping)
+                if p_force[a] is not None:
+                    new_vel_a = entity_a.state.p_vel + (p_force[a] / entity_a.mass) * self.dt 
+                else:
+                    new_vel_a = entity_a.state.p_vel
+                new_pos_a = entity_a.state.p_pos + new_vel_a*self.dt
+
+                # Clip positions to stay within bounds of the window
+                new_pos_a = np.clip(new_pos_a, -1.0,1.0) # change this to cam_range later
+                # Add Brownian motion noise to not get stuck at borders
+                brownian_step = [BrownianMotion(drift=0, scale=1, t=1, rng=None).sample_at([1])[0], # if not in 2D environment, you have to adapt dimensions!
+                                 BrownianMotion(drift=0, scale=1, t=1, rng=None).sample_at([1])[0]]
+                new_pos_a += np.asarray(brownian_step)
+                # Check if the new position collides with anyone
+                for b, entity_b in enumerate(self.entities):
+                    if not entity_b.movable:
+                        continue
+                    # Ensure no double checking
+                    if b <= a:
+                        continue
+                    # First, get new position and velocity of b
+                    if p_force[b] is not None:
+                        new_vel_b = entity_b.state.p_vel*(1 - self.damping) + (p_force[b]/entity_b.mass) * self.dt
+                    else:
+                        new_vel_b = entity_b.state.p_vel*(1 - self.damping)
+                    new_pos_b = entity_b.state.p_pos + new_vel_b*self.dt
+                    # Clip positions to stay within bounds of the window
+                    new_pos_b = np.clip(new_pos_b, -1.0, 1.0) 
+                    # compute actual distance between entities
+                    delta_pos = new_pos_a - new_pos_b
+                    # compute Euclidean distance
+                    dist = np.sqrt(np.sum(np.square(delta_pos)))
+                    # minimum allowable distance
+                    dist_min = entity_a.size + entity_b.size
+                    # If collision detected, shift update position and velocity
+                    if dist < dist_min and a != b:
+                        missing_dist = dist_min - dist
+                        # unit direction from b → a
+                        dir_ab = delta_pos / dist
+                        # displacement needed
+                        correction_vector = dir_ab * (missing_dist)
+                        # update pos and vel (assuming dt = 1)
+                        new_vel_a += correction_vector
+                        new_pos_a += correction_vector
+                        # set flag to true to indicate another check is needed
+                        is_collision = True
+                   
+                entity_a.state.p_vel = new_vel_a
+                entity_a.state.p_pos = new_pos_a               
+            
+            counter += 1
+        print('exited while loop after counts: ', counter)
+    
+
+    def integrate_state_old(self, p_force):
         #print('new_round')
         #print('#################')
         for i, entity in enumerate(self.entities):
