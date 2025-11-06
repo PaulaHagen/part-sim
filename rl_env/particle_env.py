@@ -457,11 +457,12 @@ class MyWorld(World):
                 new_pos_a = entity_a.state.p_pos + new_vel_a*self.dt
 
                 # Clip positions to stay within bounds of the window
-                new_pos_a = np.clip(new_pos_a, -1.0,1.0) # change this to cam_range later
-                # Add Brownian motion noise to not get stuck at borders
-                brownian_step = [BrownianMotion(drift=0, scale=1, t=1, rng=None).sample_at([1])[0], # if not in 2D environment, you have to adapt dimensions!
-                                 BrownianMotion(drift=0, scale=1, t=1, rng=None).sample_at([1])[0]]
-                new_pos_a += np.asarray(brownian_step)
+                if new_pos_a[0] < -1.0 or new_pos_a[0] > 1.0 or new_pos_a[1] < -1.0 or new_pos_a[1] > 1.0:
+                    new_pos_a = np.clip(new_pos_a, -1.0,1.0) # change this to cam_range later
+                    # Add Brownian motion noise to not get stuck at borders (from a normal distribution with mean 0 and std 1 -> most values will be between -3 and 3)
+                    brownian_step = [BrownianMotion(drift=0, scale=1, t=1, rng=None).sample_at([1])[0], # if not in 2D environment, you have to adapt dimensions!
+                                    BrownianMotion(drift=0, scale=1, t=1, rng=None).sample_at([1])[0]]
+                    new_pos_a += 0.1*np.asarray(brownian_step)
                 # Check if the new position collides with anyone
                 for b, entity_b in enumerate(self.entities):
                     if not entity_b.movable:
