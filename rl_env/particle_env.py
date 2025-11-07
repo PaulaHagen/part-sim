@@ -90,6 +90,7 @@ class raw_env(SimpleEnv, EzPickle):
         self.metadata["name"] = "particle_v1"
         self.cam_range = 75.0 # -75.0 in the negative direction and both, in x and y direction
 
+        self.agent_trails = {f"agent_{i}": [] for i in range(num_agents)}  # Initialize trails for each agent
     
     # override reset function to fit pettingzoo/gym standard of returning the initial observations
     def reset(self, seed=None, options=None):
@@ -116,14 +117,13 @@ class raw_env(SimpleEnv, EzPickle):
         # clear screen
         self.screen.fill((255, 255, 255))
 
-        # flip entities so landmakrs are drawn last (they will be rendered in the background)
+        # flip entities so landmarks are drawn last (they will be rendered in the background)
         entities_flipped = self.world.entities[::-1]
 
         # We want to prohibit agents moving outside the screen, so we choose a fixed cam_range
         cam_range = self.cam_range
 
-        # update geometry and text positions
-        text_line = 0
+        # Draw entities (landmarks and agents)
         for e, entity in enumerate(entities_flipped):
             # geometry
             x, y = entity.state.p_pos
@@ -145,6 +145,20 @@ class raw_env(SimpleEnv, EzPickle):
             assert (
                 0 < x < self.width and 0 < y < self.height
             ), f"Coordinates {(x, y)} are out of bounds."
+
+        # Draw trails for each agent (rendered in front of entities)
+        for agent_name, trail in self.agent_trails.items():
+            if len(trail) > 1:
+                scaled_trail = [
+                    (
+                        (pos[0] / cam_range) * self.width // 2 * 0.9 + self.width // 2,
+                        (-pos[1] / cam_range) * self.height // 2 * 0.9 + self.height // 2,
+                    )
+                    for pos in trail
+                ]
+                # Find the agent by name
+                agent = next(agent for agent in self.world.agents if agent.name == agent_name)
+                pygame.draw.lines(self.screen, agent.color * 200, False, scaled_trail, 2)
     
     # override _execute_world_step function
     def _execute_world_step(self):
@@ -189,6 +203,13 @@ class raw_env(SimpleEnv, EzPickle):
                 reward = agent_reward
 
             self.rewards[agent.name] = reward
+
+        # Update trails for each agent
+        for agent in self.world.agents:
+            self.agent_trails[agent.name].append(agent.state.p_pos.copy())
+            # Limit trail length to avoid memory issues
+            if len(self.agent_trails[agent.name]) > 50:  # Keep the last 50 positions
+                self.agent_trails[agent.name].pop(0)
     
     # set env action for a particular agent (Overwritten from mpe2/_mpe_utils/simple_env.py)
     def _set_action(self, action, agent, action_space, time=None):
@@ -370,7 +391,7 @@ class MyWorld(World):
                 noise = (self.apply_brownian_noise(num_dimensions=2)
                     if agent.u_noise
                     else 0.0)
-                p_force[i] = agent.action.u * self.agent_velocity + noise
+                p_force[i] = agent.action.u * self.agent_velocity + 0.0 # instead, we can add the noise here
         return p_force
     
     # Override step function from _mpe2/utils/core.py
@@ -407,7 +428,7 @@ class MyWorld(World):
             if new_pos[i][0] < -self.cam_range or new_pos[i][0] > self.cam_range or new_pos[i][1] < -self.cam_range or new_pos[i][1] > self.cam_range:
                 new_pos[i] = np.clip(new_pos[i], -self.cam_range,self.cam_range) # change this to cam_range later
             # Add Brownian motion noise to not get stuck at borders
-            new_pos[i] += self.apply_brownian_noise(num_dimensions=2)
+            #new_pos[i] += self.apply_brownian_noise(num_dimensions=2)
 
         # Next, change states until no collisions are detected anymore
         is_collision = True
