@@ -53,7 +53,7 @@ class raw_env(SimpleEnv, EzPickle):
         self,
         num_agents=10,
         num_food_sources=1,
-        obs_type = 'proprioception',
+        obs_type = 'old',
         flow = 'none',
         max_cycles=25,
         continuous_actions=False,
@@ -61,7 +61,7 @@ class raw_env(SimpleEnv, EzPickle):
         dynamic_rescaling=False,
         cam_range=75.0,
         agent_radius=1.09,
-        agent_velocity=6.1,
+        agent_velocity=3,
     ):
         EzPickle.__init__(
             self,
@@ -189,13 +189,51 @@ class raw_env(SimpleEnv, EzPickle):
                 reward = agent_reward
 
             self.rewards[agent.name] = reward
+    
+    # set env action for a particular agent (Overwritten from mpe2/_mpe_utils/simple_env.py)
+    def _set_action(self, action, agent, action_space, time=None):
+        agent.action.u = np.zeros(self.world.dim_p)
+        agent.action.c = np.zeros(self.world.dim_c)
+
+        if agent.movable:
+            # physical action
+            agent.action.u = np.zeros(self.world.dim_p)
+            if self.continuous_actions:
+                # Process continuous action as in OpenAI MPE
+                # Note: this ordering preserves the same movement direction as in the discrete case
+                agent.action.u[0] += action[0][2] - action[0][1]
+                agent.action.u[1] += action[0][4] - action[0][3]
+            else:
+                # process discrete action
+                if action[0] == 1:
+                    agent.action.u[0] = -1.0  # left
+                elif action[0] == 2:
+                    agent.action.u[0] = +1.0  # right
+                elif action[0] == 3:
+                    agent.action.u[1] = -1.0  # down
+                elif action[0] == 4:
+                    agent.action.u[1] = +1.0  # up
+                elif action[0] == 0:
+                    pass  # do nothing
+            action = action[1:]
+        if not agent.silent:
+            # communication action
+            if self.continuous_actions:
+                agent.action.c = action[0]
+            else:
+                agent.action.c = np.zeros(self.world.dim_c)
+                agent.action.c[action[0]] = 1.0
+            action = action[1:]
+        # make sure we used all elements of action
+        assert len(action) == 0
+
 
 env = make_env(raw_env) # this throws an error for the return of the overwritten reset function (only for "env", not for "raw-env" or "parallel_env")
 #env = raw_env
 parallel_env = parallel_wrapper_fn(env)
 
 class Scenario(BaseScenario):
-    def make_world(self, num_agents=10, num_food_sources=1, obs_type = 'proprioception', flow='none', cam_range=75.0, agent_radius=1.09, agent_velocity=6.1):
+    def make_world(self, num_agents=10, num_food_sources=1, obs_type = 'old', flow='none', cam_range=75.0, agent_radius=1.09, agent_velocity=3):
         world = MyWorld()
         num_agents = num_agents
         num_food_sources = num_food_sources
@@ -222,6 +260,10 @@ class Scenario(BaseScenario):
             landmark.boundary = False # If True, landmark cannot be seen in observations
         world.cam_range = cam_range
         world.agent_velocity = agent_velocity
+        # remove simulation timestep
+        world.dt = 1.0
+        # remove damping (loss of physical energy)
+        self.damping = 0.0
         return world
 
     def reset_world(self, world, np_random):
@@ -271,7 +313,7 @@ class Scenario(BaseScenario):
     # (2) no collisions with other agents
     # (3) staying within the environment bounds
     def reward(self, agent, world):
-        dist_to_food = np.sum(np.square(agent.state.p_pos - world.landmarks[0].state.p_pos))
+        dist_to_food = np.sqrt(np.sum(np.square(agent.state.p_pos - world.landmarks[0].state.p_pos)))
         return -dist_to_food
 
     def reward_new(self, agent, world):
@@ -301,7 +343,7 @@ class Scenario(BaseScenario):
                 if entity.boundary:  # invisible entities
                     entity_pos.append(np.array([0.0,0.0]))
                 else:
-                    entity_pos.append(entity.state.p_pos) # entity_pos are the vectors to the other entities
+                    entity_pos.append(entity.state.p_pos) # entity_pos are the vectors from the origin to the other entities
         elif world.obs_type == "vision":
             for entity in world.entities:
                 entity_pos.append(entity.state.p_pos - agent.state.p_pos) # old structure right now (only swapped landmarks for entities but this does not seem to work at all)
@@ -355,6 +397,7 @@ class MyWorld(World):
             if not entity.movable:
                 new_vels[i] = entity.state.p_vel
                 new_pos[i] = entity.state.p_pos
+                continue
             new_vels[i] = entity.state.p_vel*(1 - self.damping)
             if p_force[i] is not None:
                 new_vels[i] += p_force[i] * self.dt
@@ -363,8 +406,8 @@ class MyWorld(World):
             # Clip positions to stay within bounds of the window
             if new_pos[i][0] < -self.cam_range or new_pos[i][0] > self.cam_range or new_pos[i][1] < -self.cam_range or new_pos[i][1] > self.cam_range:
                 new_pos[i] = np.clip(new_pos[i], -self.cam_range,self.cam_range) # change this to cam_range later
-                # Add Brownian motion noise to not get stuck at borders
-                new_pos[i] += self.apply_brownian_noise(num_dimensions=2)
+            # Add Brownian motion noise to not get stuck at borders
+            new_pos[i] += self.apply_brownian_noise(num_dimensions=2)
 
         # Next, change states until no collisions are detected anymore
         is_collision = True
@@ -407,9 +450,9 @@ class MyWorld(World):
             entity.state.p_pos = new_pos[i]
 
 
-    # Apply Brownian Noise (from a normal distribution with mean 0 and std 1 -> most values will be between -3 and 3), multiplied by a small scalar
+    # Apply Brownian Noise (from a normal distribution with mean 0 and std 20% of velocity -> most values will be between -0.6*vel and 0.6*vel), multiplied by a small scalar
     def apply_brownian_noise(self, num_dimensions=2):
         brownian_step = []
         for dim in range(num_dimensions):
-            brownian_step.append(BrownianMotion(drift=0, scale=1, t=1, rng=None).sample_at([1])[0])
+            brownian_step.append(BrownianMotion(drift=0, scale=0.2*self.agent_velocity, t=1, rng=None).sample_at([1])[0])
         return np.asarray(brownian_step)
