@@ -27,18 +27,13 @@ particle_v1.env(max_cycles=25, num_agents=10, num_food_sources=1, flow='none', c
 ```
 
 
-
 `max_cycles`:  number of frames (a step for each agent) until game terminates
-
-`continuous_actions`: Whether agent action spaces are discrete(default) or continuous
 
 `num_agents`: number of agents
 
 `num_food_sources`: number of food sources (landmarks)
 
 `flow`: type of flow: 'none' (default), 'circular', 'random'
-
-`dynamic_rescaling`: Whether to rescale the size of agents and landmarks based on the screen size
 
 """
 
@@ -51,7 +46,6 @@ from mpe2._mpe_utils.scenario import BaseScenario
 from mpe2._mpe_utils.simple_env import SimpleEnv, make_env
 import pygame
 from stochastic.processes.continuous import BrownianMotion
-alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 
 
 class raw_env(SimpleEnv, EzPickle):
@@ -65,6 +59,9 @@ class raw_env(SimpleEnv, EzPickle):
         continuous_actions=False,
         render_mode=None,
         dynamic_rescaling=False,
+        cam_range=75.0,
+        agent_radius=1.09,
+        agent_velocity=6.1,
     ):
         EzPickle.__init__(
             self,
@@ -74,9 +71,12 @@ class raw_env(SimpleEnv, EzPickle):
             max_cycles=max_cycles,
             continuous_actions=continuous_actions,
             render_mode=render_mode,
+            cam_range=cam_range,
+            agent_radius=agent_radius,
+            agent_velocity=agent_velocity,
         )
         scenario = Scenario()
-        world = scenario.make_world(num_agents, num_food_sources, obs_type, flow)
+        world = scenario.make_world(num_agents, num_food_sources, obs_type, flow, cam_range, agent_radius, agent_velocity)
         SimpleEnv.__init__(
             self,
             scenario=scenario,
@@ -86,7 +86,10 @@ class raw_env(SimpleEnv, EzPickle):
             continuous_actions=continuous_actions,
             dynamic_rescaling=dynamic_rescaling,
         )
+
         self.metadata["name"] = "particle_v1"
+        self.cam_range = 75.0 # -75.0 in the negative direction and both, in x and y direction
+
     
     # override reset function to fit pettingzoo/gym standard of returning the initial observations
     def reset(self, seed=None, options=None):
@@ -116,15 +119,8 @@ class raw_env(SimpleEnv, EzPickle):
         # flip entities so landmakrs are drawn last (they will be rendered in the background)
         entities_flipped = self.world.entities[::-1]
 
-        # update bounds to center around agent
-        #all_poses = [entity.state.p_pos for entity in entities_flipped]
-
         # We want to prohibit agents moving outside the screen, so we choose a fixed cam_range
-        cam_range = self.original_cam_range
-
-        # The scaling factor is used for dynamic rescaling of the rendering - a.k.a Zoom In/Zoom Out effect
-        # The 0.9 is a factor to keep the entities from appearing "too" out-of-bounds
-        scaling_factor = 0.9 * cam_range
+        cam_range = self.cam_range
 
         # update geometry and text positions
         text_line = 0
@@ -141,38 +137,14 @@ class raw_env(SimpleEnv, EzPickle):
             x += self.width // 2
             y += self.height // 2
 
-            # 350 is an arbitrary scale factor to get pygame to render similar sizes as pyglet
-            if self.dynamic_rescaling:
-                radius = entity.size * 350 * scaling_factor
-            else:
-                radius = entity.size * 350
+            # scale sizes as well
+            radius = (entity.size / cam_range) * self.width // 2
 
             pygame.draw.circle(self.screen, entity.color * 200, (x, y), radius)
             pygame.draw.circle(self.screen, (0, 0, 0), (x, y), radius, 1)  # borders
             assert (
                 0 < x < self.width and 0 < y < self.height
             ), f"Coordinates {(x, y)} are out of bounds."
-
-            # text
-            if isinstance(entity, Agent):
-                if entity.silent:
-                    continue
-                if np.all(entity.state.c == 0):
-                    word = "_"
-                elif self.continuous_actions:
-                    word = (
-                        "[" + ",".join([f"{comm:.2f}" for comm in entity.state.c]) + "]"
-                    )
-                else:
-                    word = alphabet[np.argmax(entity.state.c)]
-
-                message = entity.name + " sends " + word + "   "
-                message_x_pos = self.width * 0.05
-                message_y_pos = self.height * 0.95 - (self.height * 0.05 * text_line)
-                self.game_font.render_to(
-                    self.screen, (message_x_pos, message_y_pos), message, (0, 0, 0)
-                )
-                text_line += 1
     
     # override _execute_world_step function
     def _execute_world_step(self):
@@ -193,15 +165,13 @@ class raw_env(SimpleEnv, EzPickle):
             self._set_action(scenario_action, agent, self.action_spaces[agent.name])
 
         self.world.step()
-        #print("step is done")
-        #print(" ")
-        #print(" ")
+
         # after action is chosen, clip the positions of all entities to stay in bounds
         for entity in self.world.entities:
             entity.state.p_pos = np.clip(
                 entity.state.p_pos,
-                -self.original_cam_range,
-                self.original_cam_range
+                -self.cam_range,
+                self.cam_range
             )
 
         global_reward = 0.0
@@ -225,7 +195,7 @@ env = make_env(raw_env) # this throws an error for the return of the overwritten
 parallel_env = parallel_wrapper_fn(env)
 
 class Scenario(BaseScenario):
-    def make_world(self, num_agents=10, num_food_sources=1, obs_type = 'proprioception', flow='none'):
+    def make_world(self, num_agents=10, num_food_sources=1, obs_type = 'proprioception', flow='none', cam_range=75.0, agent_radius=1.09, agent_velocity=6.1):
         world = MyWorld()
         num_agents = num_agents
         num_food_sources = num_food_sources
@@ -236,7 +206,7 @@ class Scenario(BaseScenario):
         for i, agent in enumerate(world.agents):
             agent.name = f"agent_{i}"
             agent.collide = True # they will be propulsed away if they collide -> check, why this happens at the t+1 right now!
-            agent.size = 0.02
+            agent.size = agent_radius
             agent.silent = True # we don't work with communication in this env
             # we want the agents to be affected by Brownian motion
             # (Implemented in MyWorld class below)
@@ -248,8 +218,10 @@ class Scenario(BaseScenario):
             landmark.name = "food source %d" % i
             landmark.collide = False
             landmark.movable = False
-            landmark.size = 0.2
+            landmark.size = 25 * agent_radius
             landmark.boundary = False # If True, landmark cannot be seen in observations
+        world.cam_range = cam_range
+        world.agent_velocity = agent_velocity
         return world
 
     def reset_world(self, world, np_random):
@@ -273,11 +245,11 @@ class Scenario(BaseScenario):
         world.landmarks[0].color = np.array([0.95, 0.45, 0.15])
         # set random initial states
         for agent in world.agents:
-            agent.state.p_pos = np_random.uniform(-1, +1, world.dim_p)
+            agent.state.p_pos = np_random.uniform(-world.cam_range, +world.cam_range, world.dim_p)
             agent.state.p_vel = np.zeros(world.dim_p) # change p_vel if you want continuous movement
             agent.state.c = np.zeros(world.dim_c)
         for i, landmark in enumerate(world.landmarks):
-            landmark.state.p_pos = np_random.uniform(-0.9, +0.9, world.dim_p)
+            landmark.state.p_pos = np_random.uniform(-0.8*world.cam_range, +0.8*world.cam_range, world.dim_p)
             landmark.state.p_vel = np.zeros(world.dim_p)
 
         observations = {}
@@ -300,15 +272,7 @@ class Scenario(BaseScenario):
     # (3) staying within the environment bounds
     def reward(self, agent, world):
         dist_to_food = np.sum(np.square(agent.state.p_pos - world.landmarks[0].state.p_pos))
-        penalty_for_colliding = 0.0
-        if agent.collide:
-            for a in world.agents:
-                penalty_for_colliding -= 1.0 * (self.is_collision(a, agent) and a != agent) # reward of -1 for each collision
-        border_position_penalty = 0.0
-        distance_to_border = 1 - np.max(np.abs(agent.state.p_pos)) # distance to the closest border
-        if distance_to_border <= agent.size *1.5: # if the agent is closer to the border than 1.5 times its radius
-            border_position_penalty = -1.0
-        return -dist_to_food #+ border_position_penalty + penalty_for_colliding # Add after size problems and collision bug are fixed 
+        return -dist_to_food
 
     def reward_new(self, agent, world):
         # Food reward
@@ -364,7 +328,7 @@ class MyWorld(World):
                 noise = (self.apply_brownian_noise(num_dimensions=2)
                     if agent.u_noise
                     else 0.0)
-                p_force[i] = agent.action.u + noise
+                p_force[i] = agent.action.u * self.agent_velocity + noise
         return p_force
     
     # Override step function from _mpe2/utils/core.py
@@ -397,8 +361,8 @@ class MyWorld(World):
             new_pos[i] = entity.state.p_pos + new_vels[i] * self.dt
 
             # Clip positions to stay within bounds of the window
-            if new_pos[i][0] < -1.0 or new_pos[i][0] > 1.0 or new_pos[i][1] < -1.0 or new_pos[i][1] > 1.0:
-                new_pos[i] = np.clip(new_pos[i], -1.0,1.0) # change this to cam_range later
+            if new_pos[i][0] < -self.cam_range or new_pos[i][0] > self.cam_range or new_pos[i][1] < -self.cam_range or new_pos[i][1] > self.cam_range:
+                new_pos[i] = np.clip(new_pos[i], -self.cam_range,self.cam_range) # change this to cam_range later
                 # Add Brownian motion noise to not get stuck at borders
                 new_pos[i] += self.apply_brownian_noise(num_dimensions=2)
 
@@ -430,8 +394,8 @@ class MyWorld(World):
                         new_vels[a] += correction_vector
                         new_pos[a] += correction_vector
                         # Clip positions to stay within bounds of the window
-                        if new_pos[a][0] < -1.0 or new_pos[a][0] > 1.0 or new_pos[a][1] < -1.0 or new_pos[a][1] > 1.0:
-                            new_pos[a] = np.clip(new_pos[a], -1.0,1.0) # change this to cam_range later
+                        if new_pos[a][0] < -self.cam_range or new_pos[a][0] > self.cam_range or new_pos[a][1] < -self.cam_range or new_pos[a][1] > self.cam_range:
+                            new_pos[a] = np.clip(new_pos[a], -self.cam_range, self.cam_range)
                             # Add Brownian motion noise to not get stuck at borders
                             new_pos[a] += self.apply_brownian_noise(num_dimensions=2)
                         # set flag to true to indicate another check is needed
