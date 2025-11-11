@@ -188,22 +188,10 @@ class raw_env(SimpleEnv, EzPickle):
                 self.cam_range
             )
 
-        global_reward = 0.0
-        if self.local_ratio is not None:
-            global_reward = float(self.scenario.global_reward(self.world))
-
+        # gather rewards
         for agent in self.world.agents:
-            agent_reward = float(self.scenario.reward(agent, self.world))
-            if self.local_ratio is not None:
-                reward = (
-                    global_reward * (1 - self.local_ratio)
-                    + agent_reward * self.local_ratio
-                )
-            else:
-                reward = agent_reward
-
-            self.rewards[agent.name] = reward
-
+            self.rewards[agent.name] = float(self.scenario.reward(agent, self.world))
+        
         # Update trails for each agent
         for agent in self.world.agents:
             self.agent_trails[agent.name].append(agent.state.p_pos.copy())
@@ -445,13 +433,16 @@ class MyWorld(World):
                     delta_pos = new_pos[a] - new_pos[b]
                     # compute Euclidean distance
                     dist = np.sqrt(np.sum(np.square(delta_pos)))
+                    dist = max(dist, 0.1)
                     # minimum allowable distance
                     dist_min = self.entities[a].size + self.entities[b].size
                     # If collision detected, shift update position and velocity
                     if dist < dist_min and a != b:
                         missing_dist = dist_min - dist
+                        # account for very small distances
+                        delta_pos = np.array([max(delta_pos[0], 0.1), max(delta_pos[1], 0.1) ])
                         # unit direction from b → a
-                        dir_ab = delta_pos / dist
+                        dir_ab = delta_pos  / dist
                         # displacement needed (but at least 25% of dist_min to avoid getting stuck with infinetely small corrections)
                         correction_vector = dir_ab * max(missing_dist, dist_min*0.25)
                         # update pos and vel

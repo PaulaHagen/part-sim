@@ -24,6 +24,7 @@ def train(env_fn, steps: int = 300000, seed: int | None = 0, render_mode: str | 
 
     # This is crucial for combining multi-agent observations
     env = ss.multiagent_wrappers.pad_observations_v0(env)
+    env = ss.multiagent_wrappers.pad_action_space_v0(env)
 
     # Convert parallel to Markov VectorEnv (needed for SB3). This treats each agent as a separate environment, so if num_agents=10, this is like having 10 envs.
     env = ss.pettingzoo_env_to_vec_env_v1(env)
