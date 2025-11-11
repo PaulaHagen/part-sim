@@ -88,10 +88,7 @@ def eval(env_fn, num_games: int = 100, render_mode: str | None = None, **env_kwa
             if termination or truncation:
                 break
             else:
-                if agent == env.possible_agents[0]:
-                    act = env.action_space(agent).sample()
-                else:
-                    act = model.predict(obs, deterministic=True)[0]
+                act = model.predict(obs, deterministic=True)[0]
             env.step(act)
     env.close()
 
@@ -136,7 +133,7 @@ if __name__ == "__main__":
     env_kwargs = dict(num_agents=10, num_food_sources=1, obs_type = OBS_TYPE, flow='none', max_cycles=100)
  
     # Train a model
-    train(env_fn, steps=10000, seed=0, render_mode = None, **env_kwargs)
+    #train(env_fn, steps=10000, seed=0, render_mode = None, **env_kwargs)
 
     # Evaluate 10 games without rendering
     #eval(num_games=10, render_mode=None, **env_kwargs)
