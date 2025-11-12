@@ -260,6 +260,7 @@ class Scenario(BaseScenario):
             # (Implemented in MyWorld class below)
             agent.u_noise = True
             agent.boundary = False
+            agent.collided = False  # to keep track of whether the agent has collided in the current step
         # add landmarks
         world.landmarks = [Landmark() for i in range(num_food_sources)]
         for i, landmark in enumerate(world.landmarks):
@@ -267,7 +268,7 @@ class Scenario(BaseScenario):
             landmark.collide = False
             landmark.movable = False
             landmark.size = 25 * agent_radius
-            landmark.boundary = False # If True, landmark cannot be seen in observations
+            landmark.boundary = True # If True, landmark cannot be seen in observations
         world.cam_range = cam_range
         world.agent_velocity = agent_velocity
         # remove simulation timestep
@@ -322,50 +323,52 @@ class Scenario(BaseScenario):
     # Reward is given based on (1) minimizing distance to food, 
     # (2) no collisions with other agents
     # (3) staying within the environment bounds
-    def reward(self, agent, world):
+    def reward_old(self, agent, world):
+        # Distance to food reward
         dist_to_food = np.sqrt(np.sum(np.square(agent.state.p_pos - world.landmarks[0].state.p_pos)))
         return -dist_to_food
 
-    def reward_new(self, agent, world):
+    def reward(self, agent, world):
+        food_reward, penalty_for_colliding, border_position_penalty = 0.0, 0.0, 0.0
         # Food reward
-        food_reward = 0.0
-        for landmark in world.landmarks:
-            if self.is_collision(agent, landmark):
-                food_reward += 1.0
+        #for landmark in world.landmarks:
+        #    if self.is_collision(agent, landmark):
+        #        food_reward += 1.0
+        dist_to_food = np.sqrt(np.sum(np.square(agent.state.p_pos - world.landmarks[0].state.p_pos)))
         # Penalty for colliding
-        penalty_for_colliding = 0.0
-        if agent.collide:
-            for a in world.agents:
-                penalty_for_colliding -= 2.0 * (self.is_collision(a, agent) and a != agent) # reward of -1 for each collision
+        if agent.collide: # check if agent is a collider
+            penalty_for_colliding -= 20.0 * (agent.collided) # reward of -2 if agent collided in last step
         # Penalty for trying to move outside the frame
-        border_position_penalty = 0.0
         distance_to_border = 1 - np.max(np.abs(agent.state.p_pos)) # distance to the closest border
         if distance_to_border <= agent.size *1.5: # if the agent is closer to the border than 1.5 times its radius
-            border_position_penalty = -1.0
-        return food_reward + border_position_penalty + penalty_for_colliding # Add after size problems and collision bug are fixed 
+            border_position_penalty = -10.0
+        return -dist_to_food + border_position_penalty + penalty_for_colliding # Add after size problems and collision bug are fixed 
 
     def observation(self, agent, world):
         # get distances to all other entities for this agent and combine with its velocity
         entity_pos = []
         
-        if world.obs_type == "god":
+        if world.obs_type == "vision":
             for entity in world.entities:
                 if entity.boundary:  # invisible entities
                     entity_pos.append(np.array([0.0,0.0]))
                 else:
-                    entity_pos.append(entity.state.p_pos) # entity_pos are the vectors from the origin to the other entities
-        elif world.obs_type == "vision":
+                    entity_pos.append(entity.state.p_pos) # they see all the other entities but not the target
+        elif world.obs_type == "god":
             for entity in world.entities:
-                entity_pos.append(entity.state.p_pos - agent.state.p_pos) # old structure right now (only swapped landmarks for entities but this does not seem to work at all)
+                entity_pos.append(entity.state.p_pos - agent.state.p_pos) # they see every vector position relative to themselves
+        elif world.obs_type == "god2":
+            for entity in world.entities:
+                entity_pos.append(entity.state.p_pos) # they see every position
         elif world.obs_type == "proprioception":
             for entity in world.entities:
-                if entity == agent:
+                if entity.name == agent.name:
                     entity_pos.append(entity.state.p_pos) # only own position added
                 else:
                     entity_pos.append(np.array([0.0,0.0]))
         elif world.obs_type == "old":
             for entity in world.landmarks:
-                entity_pos.append(entity.state.p_pos - agent.state.p_pos)
+                entity_pos.append(entity.state.p_pos - agent.state.p_pos) # agents know distance to the target
         else:
             print("Incorrect observation space type. Enter \"god\", \"vision\" or \"proprioception\"")
 
@@ -381,6 +384,7 @@ class MyWorld(World):
                     if agent.u_noise
                     else 0.0)
                 p_force[i] = agent.action.u * self.agent_velocity + 0.0 # instead, we can add the noise here
+                # Also velocity gets multiplied by each coordinate -> true velocity would be smaller -> change later?
         return p_force
     
     # Override step function from _mpe2/utils/core.py
@@ -404,6 +408,10 @@ class MyWorld(World):
         new_pos = np.zeros((len(self.entities), self.dim_p))
         new_vels = np.zeros((len(self.entities), self.dim_p))
         for i, entity in enumerate(self.entities):
+            # set all collided attributes to False at the beginning of the step
+            entity.collided = False
+
+            # save new velocities and positions in array
             if not entity.movable:
                 new_vels[i] = entity.state.p_vel
                 new_pos[i] = entity.state.p_pos
@@ -456,6 +464,10 @@ class MyWorld(World):
                             new_pos[a] += self.apply_brownian_noise(num_dimensions=2)
                         # set flag to true to indicate another check is needed
                         is_collision = True
+                        # set agents' collided attribute to True to punish them in the reward function
+                        self.entities[a].collided = True
+                        self.entities[b].collided = True
+
 
         # Finally, save all new positions and velocities to the actual entities
         for i, entity in enumerate(self.entities):

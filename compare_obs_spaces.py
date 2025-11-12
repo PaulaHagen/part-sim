@@ -124,16 +124,16 @@ if __name__ == "__main__":
     parser.add_argument('obs_type', help='Type of observation space for agents (god, vision, proprioception)')
     args = parser.parse_args()
 
-    if args.obs_type in ['god', 'vision', 'proprioception', 'old']:
+    if args.obs_type in ['god', 'god2', 'vision', 'proprioception', 'old']:
         OBS_TYPE = args.obs_type
     else:
-        print('No correct observation space type given. Options are: god, vision, proprioception.')
+        print('No correct observation space type given. Options are: god, god2, vision, proprioception.')
 
     # Set vector_state to false in order to use visual observations (significantly longer training time)
     env_kwargs = dict(num_agents=10, num_food_sources=1, obs_type = OBS_TYPE, flow='none', max_cycles=100)
  
     # Train a model
-    #train(env_fn, steps=10000, seed=0, render_mode = None, **env_kwargs)
+    #train(env_fn, steps=10000, seed=1, render_mode = None, **env_kwargs)
 
     # Evaluate 10 games without rendering
     #eval(num_games=10, render_mode=None, **env_kwargs)
