@@ -67,6 +67,7 @@ class raw_env(SimpleEnv, EzPickle):
             self,
             num_agents=num_agents,
             num_food_sources=num_food_sources,
+            obs_type=obs_type,
             flow=flow,
             max_cycles=max_cycles,
             continuous_actions=continuous_actions,
@@ -224,6 +225,7 @@ class raw_env(SimpleEnv, EzPickle):
                     agent.action.u[1] = +1.0  # up
                 elif action[0] == 0:
                     pass  # do nothing
+            print('Action: ', action[0])
             action = action[1:]
         if not agent.silent:
             # communication action
@@ -246,7 +248,6 @@ class Scenario(BaseScenario):
         world = MyWorld()
         num_agents = num_agents
         num_food_sources = num_food_sources
-        print(obs_type)
         world.obs_type = obs_type
         # add agents
         world.agents = [Agent() for i in range(num_agents)]
